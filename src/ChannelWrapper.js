@@ -311,7 +311,7 @@ export default class ChannelWrapper extends EventEmitter {
         }
         const channel = this._channel;
 
-        while (this._shouldPublish() && this._working && this._messages.length()) {
+        while (this._shouldPublish() && this._working && this._messages.length > 0) {
             const message = this._messages[0];
             if (message) {
                 Promise.resolve().then(() => {
