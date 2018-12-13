@@ -304,82 +304,66 @@ export default class ChannelWrapper extends EventEmitter {
     }
 
     _publishQueuedMessages(workerNumber) {
-        if(!this._shouldPublish() || !this._working || (workerNumber !== this._workerNumber)) {
+        if (!this._shouldPublish() || !this._working || workerNumber !== this._workerNumber) {
             // Can't publish anything right now...
             this._working = false;
             return Promise.resolve();
         }
-
         const channel = this._channel;
-        const message = this._messages[0];
 
-        Promise.resolve()
-        .then(() => {
-            const encodedMessage = this._json ? new Buffer.from(JSON.stringify(message.content)) : message.content;
+        while (this._shouldPublish() && this._working && this._messages.length()) {
+            const message = this._messages[0];
+            if (message) {
+                Promise.resolve().then(() => {
+                    const encodedMessage = this._json ? new Buffer.from(JSON.stringify(message.content)) : message.content;
 
-            const sendPromise = (() => {
-                switch (message.type) {
-                    case 'publish':
-                        return new Promise(function(resolve, reject) {
-                            const result = channel.publish(message.exchange, message.routingKey, encodedMessage,
-                                message.options,
-                                err => {
-                                    if(err) {
-                                        reject(err);
-                                    } else {
-                                        setImmediate(() => resolve(result));
-                                    }
+                    const sendPromise = (() => {
+                        switch (message.type) {
+                            case 'publish':
+                                return new Promise(function (resolve, reject) {
+                                    const result = channel.publish(message.exchange, message.routingKey, encodedMessage, message.options, err => {
+                                        if (err) {
+                                            reject(err);
+                                        } else {
+                                            setImmediate(() => resolve(result));
+                                        }
+                                    });
                                 });
-                        });
-                    case 'sendToQueue':
-                        return new Promise(function(resolve, reject) {
-                            const result = channel.sendToQueue(message.queue, encodedMessage, message.options, err => {
-                                if(err) {
-                                    reject(err);
-                                } else {
-                                    setImmediate(() => resolve(result));
-                                }
-                            });
-                        });
+                            case 'sendToQueue':
+                                return new Promise(function (resolve, reject) {
+                                    const result = channel.sendToQueue(message.queue, encodedMessage, message.options, err => {
+                                        if (err) {
+                                            reject(err);
+                                        } else {
+                                            setImmediate(() => resolve(result));
+                                        }
+                                    });
+                                });
 
-                    /* istanbul ignore next */
-                    default:
-                        throw new Error(`Unhandled message type ${message.type}`);
-                }
-            })();
-
-            return sendPromise;
-        })
-        .then(
-            result => {
-                this._messages.shift();
-                message.resolve(result);
-
-                // Send some more!
-                this._publishQueuedMessages(workerNumber);
-            },
-
-            err => {
-                if(!this._channel) {
-                    // Tried to write to a closed channel.  Leave the message in the queue and we'll try again when we
-                    // reconnect.
-                } else {
-                    // Something went wrong trying to send this message - could be JSON.stringify failed, could be the
-                    // broker rejected the message.  Either way, reject it back
-                    this._messages.shift();
-                    message.reject(err);
-
-                    // Send some more!
-                    this._publishQueuedMessages(workerNumber);
-                }
+                            /* istanbul ignore next */
+                            default:
+                                throw new Error(`Unhandled message type ${message.type}`);
+                        }
+                    })();
+                    return sendPromise;
+                }).then(result => {
+                    message.resolve(result);
+                }, err => {
+                    if (!this._channel) {
+                        // Tried to write to a closed channel.  Leave the message in the queue and we'll try again when we
+                        // reconnect.
+                    } else {
+                        // Something went wrong trying to send this message - could be JSON.stringify failed, could be the
+                        // broker rejected the message.  Either way, reject it back
+                        message.reject(err);
+                    }
+                }).catch( /* istanbul ignore next */err => {
+                    this.emit('error', err);
+                    this._working = false;
+                });
             }
-        )
-        .catch( /* istanbul ignore next */ err => {
-            this.emit('error', err);
-            this._working = false;
-        });
-
-        return null;
+            this._messages.shift();
+        }
     }
 
     // Send an `ack` to the underlying channel.
